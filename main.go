@@ -6,13 +6,11 @@ package main
 
 import (
 	"flag"
-	"fmt"
 	"log"
 	"os"
 	"strings"
 	"time"
 
-	"github.com/hpcloud/tail"
 	influx "github.com/influxdata/influxdb/client/v2"
 )
 
@@ -62,64 +60,19 @@ func main() {
 		measurement: measurement,
 	}
 
-	t, err := tail.TailFile(authLog, tail.Config{
-		Location: &tail.SeekInfo{
-			Offset: 0,
-			Whence: os.SEEK_END,
-		},
-		Follow: true,
-		ReOpen: true,
-	})
+	closer := make(chan struct{})
 
-	if err != nil {
-		log.Fatalln("Error opening", authLog, err)
-	}
-	log.Println("Tailing", authLog)
+	go func() {
+		monitorAuthLog(authLog, s)
+		closer <- struct{}{}
+	}()
 
-	const (
-		loginFinterprint  = "session opened for user"
-		logoutFingerprint = "session closed for user"
-	)
+	go func() {
+		monitorDocker(s)
+		closer <- struct{}{}
+	}()
 
-	for line := range t.Lines {
-		if strings.Contains(line.Text, loginFinterprint) {
-			index := strings.Index(line.Text, loginFinterprint)
-			text := line.Text[index:]
-
-			parts := strings.Split(text, " ")
-			if len(parts) < 4 {
-				log.Println("Unexpected number of parts", line.Text)
-				continue
-			}
-
-			user := parts[4]
-			msg := fmt.Sprint("User ", user, " logged in")
-			log.Println(msg)
-
-			s.store("login", user, msg, line.Time)
-			continue
-		}
-
-		if strings.Contains(line.Text, logoutFingerprint) {
-			index := strings.Index(line.Text, logoutFingerprint)
-			text := line.Text[index:]
-
-			parts := strings.Split(text, " ")
-			if len(parts) < 4 {
-				log.Println("Unexpected number of parts", parts)
-				continue
-			}
-
-			user := parts[4]
-			msg := fmt.Sprint("User ", user, " logged out")
-			log.Println(msg)
-
-			s.store("logout", user, msg, line.Time)
-		}
-	}
-	if err = t.Err(); err != nil {
-		log.Println(err)
-	}
+	<-closer
 }
 
 func config() (host, influx, username, password, db, measurement, authLog string) {
@@ -170,15 +123,44 @@ type eventStore struct {
 	hostname, db, measurement string
 }
 
-func (s *eventStore) store(typ, user, msg string, t time.Time) {
+func (s *eventStore) storeUserEvent(typ, user, msg string, timestamp time.Time) {
+	s.store("auth", typ, msg, map[string]string{
+		"user": user,
+	}, timestamp)
+}
+
+func (s *eventStore) storeDockerEvent(typ, service, container, image, msg string, timestamp time.Time) {
 	tags := make(map[string]string)
-	tags["hostname"] = s.hostname
-	tags["type"] = typ
-	tags["user"] = user
+
+	tags["container"] = container
+	tags["image"] = image
+
+	if service != "" {
+		tags["service"] = service
+	}
+
+	s.store("docker", typ, msg, tags, timestamp)
+}
+
+func (s *eventStore) store(provider, event, msg string, tags map[string]string, timestamp time.Time) {
+	t := make(map[string]string)
+	t["hostname"] = s.hostname
+	t["event"] = event
+
+	for k, v := range tags {
+		if _, ok := t[k]; ok {
+			log.Println(k, "is a reserved tag. Won't store", event, "event.")
+			return
+		}
+
+		t[k] = v
+	}
+
 	fields := make(map[string]interface{})
 	fields["description"] = msg
 
-	p, err := influx.NewPoint(s.measurement, tags, fields, t)
+	measurement := provider + strings.Title(s.measurement)
+	p, err := influx.NewPoint(measurement, t, fields, timestamp)
 	if err != nil {
 		log.Println("Error creating event", msg, err)
 		return

@@ -1,5 +1,5 @@
-#Loginmonitor
-Loginmonitor monitors a Linux authentication log for PAM messages indicating user login and logout.
+#Eventmonitor
+Eventmonitor monitors diffrent event sources.
 These events are written to an [InfluxDB](https://influxdata.com/time-series-platform/influxdb/) and can be used by [Grafana](http://grafana.org/) for [annotations](http://docs.grafana.org/reference/annotations/#influxdb-annotations).
 
 ##Installation
@@ -31,18 +31,35 @@ loginmonitor -help
 ```
 
 ##InfluxDB schema
-Login and logout events are written to the measurement given by the **-measurements** parameter (by default 'events'). There are two tags and one field.
+Events are written to a measurement per provider. Currently there are two providers, **auth** and **docker**.
 
-- Tag **type**: The type of event, either *login* or *logout*.
-- Tag **user**: The name of the user that caused the event.
-- Field **description**: A textual description of what happend.
+Shared tags:
+- **hostname**: The host the event occured on. This is either provided through the *-host* command line flag or automatically retrieved from the operation system.
+- **event**: The type of event.
+
+Shared fields:
+- **description**: A textual description of what happend.
+
+###Auth log
+The Linux authentication log is monitored for PAM user login and logout messages. Authentication events are stored in the `authEvents` measurement. **Event** values therefore are `login` and `logout`.
+
+Additional tags:
+- **user**: The name of the user that caused the event.
+
+###Docker
+Docker is monitored for events inicating the start and stop of a container. **Event** values are `containerStart` and `containerStop`.
+
+Additional tags:
+- **container**: The name of the container that caused the event.
+- **image**: The image the container was running.
+- **service**: The Docker Compose service the container belonged to, if available.
 
 ##Grafana Annotations
-### Annotate all logins
+###Add annotations for logouts, regardless of the user that logged out.
 ```
 SELECT description FROM events WHERE type='logout' AND $timeFilter
 ```
-###Annotate all *root* logins and logouts
+###Add annotations for logins and logouts of the *root* user.
 ```
 SELECT description FROM events WHERE "user"='root' AND $timeFilter
 ```
