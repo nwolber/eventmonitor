@@ -47,7 +47,7 @@ Additional tags:
 - **user**: The name of the user that caused the event.
 
 ###Docker
-Docker is monitored for events inicating the start and stop of a container. **Event** values are `containerStart` and `containerStop`.
+Docker is monitored for events indicating the start and stop of a container. Docker events are stored in the `dockerEvent` measurement.. **Event** values are `containerStart` and `containerStop`.
 
 Additional tags:
 - **container**: The name of the container that caused the event.
